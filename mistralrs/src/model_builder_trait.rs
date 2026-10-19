@@ -1690,7 +1690,9 @@ mod paged_attention_policy_tests {
             mapped_activation_bytes: 0,
             primary_non_attention_bytes: 0,
             mapped_non_attention_bytes: 0,
-            encoder_activation_bytes: 0,
+
+
+encoder_activation_bytes: 0,
             custom_prefill_mask: false,
             metal_prefill_mask_is_structured: false,
             planned_query_tokens: TEST_CONTEXT,

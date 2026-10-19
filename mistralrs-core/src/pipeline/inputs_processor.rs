@@ -2881,7 +2881,9 @@ pub mod text_models_inputs_processor {
         const SECOND_METAL_LIMIT: usize = 4096;
 
         #[test]
-        fn packed_prefill_requires_cold_final_causal_ragged_inputs() {
+
+
+fn packed_prefill_requires_cold_final_causal_ragged_inputs() {
             let lengths = [512, 1, 1];
             assert!(uses_packed_prefill(&lengths, true, true, true, true));
             assert!(!uses_packed_prefill(&lengths, false, true, true, true));

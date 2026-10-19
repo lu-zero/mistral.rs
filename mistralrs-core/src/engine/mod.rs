@@ -1654,7 +1654,9 @@ impl Engine {
                             primary_device,
                             memory_plan,
                             _metal_hnd_by_layer,
-                            supports_packed_prefill,
+
+
+supports_packed_prefill,
                         ) = {
                             let pipeline = get_mut_arcmutex!(self.pipeline);
                             let metadata = pipeline.get_metadata();
@@ -1691,7 +1693,9 @@ impl Engine {
                                             .collect::<Vec<_>>()
                                     })
                                     .unwrap_or_default(),
-                                pipeline.supports_packed_prefill(),
+
+
+pipeline.supports_packed_prefill(),
                             )
                         };
                         let mut rejection = None;
@@ -1856,7 +1860,17 @@ impl Engine {
                                 }
                             };
                             let reserve = (|| -> candle_core::Result<_> {
-                                let mut has_encoder_input = false;
+                                let query_tokens = query_lens
+                                    .iter()
+                                    .copied()
+                                    .max()
+                                    .unwrap_or_default()
+                                    .checked_mul(query_lens.len())
+                                    .ok_or_else(|| {
+                                        candle_core::Error::msg("padded query token count overflow")
+                                    })?;
+
+let mut has_encoder_input = false;
                                 let mut return_raw_logits = false;
                                 let mut cold = true;
                                 let mut final_chunk = true;
@@ -1913,7 +1927,22 @@ impl Engine {
                                 };
                                 #[cfg(not(feature = "metal"))]
                                 let attention_bytes = workspace.bytes;
-                                let extra_logit_tokens = memory::extra_logit_tokens(
+                                let extra_raw_logit_tokens = if output
+                                    .scheduled
+                                    .iter()
+                                    .any(|seq| get_mut_arcmutex!(seq).return_raw_logits)
+                                {
+                                    query_tokens.saturating_sub(query_lens.len())
+                                } else {
+                                    0
+                                };
+                                let bytes = memory::forward_workspace_bytes(
+                                    memory_plan,
+                                    query_tokens,
+                                    attention_bytes,
+                                    extra_raw_logit_tokens,
+
+let extra_logit_tokens = memory::extra_logit_tokens(
                                     query_tokens,
                                     query_lens.len(),
                                     is_prompt,

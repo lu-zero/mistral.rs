@@ -1,4 +1,7 @@
 use anyhow::{Context, Result};
+
+use crate::{memory_plan::RuntimeMemoryPlan, utils::memory_usage::DeviceMemory};
+
 #[cfg(any(target_family = "unix", test))]
 use std::mem::size_of;
 
@@ -6,12 +9,13 @@ use crate::{memory_plan::RuntimeMemoryPlan, utils::memory_usage::DeviceMemory};
 
 #[cfg(any(target_family = "unix", test))]
 const FA3_SCHEDULER_BATCH_ALIGNMENT: usize = 4;
-
 pub(super) struct CaptureMemoryShape {
     pub query_tokens: usize,
     pub input_bytes: usize,
     pub attention_bytes: usize,
-    pub attention_is_complete: bool,
+
+
+pub attention_is_complete: bool,
 }
 
 pub(super) fn capture_workspace_bytes(
@@ -30,7 +34,24 @@ pub(super) fn capture_workspace_bytes(
             plan.mapped_non_attention_bytes,
         )
     };
-    let attention = if shape.attention_is_complete {
+    let scaled_non_attention = non_attention
+        .checked_mul(shape.query_tokens)
+        .context("CUDA capture activation size overflow")?
+        .div_ceil(plan.planned_query_tokens.max(1));
+    let logits = if primary {
+        plan.logits_bytes_per_query_token
+            .checked_mul(shape.query_tokens)
+            .context("CUDA capture logits size overflow")?
+    } else {
+        0
+    };
+    let attention = baseline
+        .saturating_sub(non_attention)
+        .max(shape.attention_bytes);
+    scaled_non_attention
+        .max(logits)
+
+let attention = if shape.attention_is_complete {
         shape.attention_bytes
     } else {
         baseline
@@ -42,6 +63,8 @@ pub(super) fn capture_workspace_bytes(
         .and_then(|bytes| bytes.checked_add(shape.input_bytes))
         .context("CUDA capture workspace size overflow")
 }
+
+
 
 #[derive(Clone, Copy)]
 #[cfg(any(target_family = "unix", test))]
@@ -99,7 +122,6 @@ pub(super) fn fa3_capture_pool_bytes(shape: Fa3CaptureMemoryShape) -> Result<usi
             .context("FA3 capture pool size overflow")
     })
 }
-
 pub(super) fn capture_memory_available(
     plan: RuntimeMemoryPlan,
     memory: DeviceMemory,
@@ -159,7 +181,9 @@ mod tests {
             mapped_activation_bytes: 8 * GIB,
             primary_non_attention_bytes: 8 * GIB,
             mapped_non_attention_bytes: 6 * GIB,
-            encoder_activation_bytes: 16 * GIB,
+
+
+encoder_activation_bytes: 16 * GIB,
             planned_query_tokens: 4096,
             logits_bytes_per_query_token: 1024 * 1024,
             custom_prefill_mask: false,
@@ -168,12 +192,22 @@ mod tests {
     }
 
     #[test]
-    fn complete_capture_uses_decode_workspace_and_excludes_encoder_reservations() -> Result<()> {
+    fn capture_preserves_attention_scratch_but_scales_decode_activations() -> Result<()> {
+
+fn complete_capture_uses_decode_workspace_and_excludes_encoder_reservations() -> Result<()> {
         let shape = CaptureMemoryShape {
             query_tokens: 8,
             input_bytes: 32,
             attention_bytes: GIB,
-            attention_is_complete: true,
+        };
+        assert_eq!(
+            capture_workspace_bytes(plan(), true, &shape)?,
+            2 * GIB + 16 * 1024 * 1024 + 32
+        );
+        let shape = CaptureMemoryShape {
+            attention_bytes: 3 * GIB,
+
+attention_is_complete: true,
         };
         assert_eq!(
             capture_workspace_bytes(plan(), true, &shape)?,
@@ -192,13 +226,17 @@ mod tests {
         };
         assert_eq!(
             capture_workspace_bytes(plan(), true, &shape)?,
-            2 * GIB + 24 * 1024 * 1024 + 32
+            3 * GIB + 16 * 1024 * 1024 + 32
+
+2 * GIB + 24 * 1024 * 1024 + 32
         );
         Ok(())
     }
 
     #[test]
-    fn capture_adds_all_query_logits_to_text_activations() -> Result<()> {
+    fn capture_reserves_full_logits_rows_when_prefill_scaling_is_smaller() -> Result<()> {
+
+fn capture_adds_all_query_logits_to_text_activations() -> Result<()> {
         let mut plan = plan();
         plan.primary_non_attention_bytes = GIB;
         plan.primary_activation_bytes = GIB;
@@ -206,7 +244,12 @@ mod tests {
             query_tokens: 8,
             input_bytes: 0,
             attention_bytes: 0,
-            attention_is_complete: true,
+        };
+        assert_eq!(
+            capture_workspace_bytes(plan, true, &shape)?,
+            8 * 1024 * 1024
+
+attention_is_complete: true,
         };
         assert_eq!(
             capture_workspace_bytes(plan, true, &shape)?,
@@ -226,7 +269,12 @@ mod tests {
             query_tokens: 8,
             input_bytes: 32,
             attention_bytes: 1024,
-            attention_is_complete: true,
+        };
+        assert_eq!(
+            capture_workspace_bytes(plan, true, &shape)?,
+            8 * 1024 * 1024 + shape.input_bytes + shape.attention_bytes
+
+attention_is_complete: true,
         };
         assert_eq!(
             capture_workspace_bytes(plan, true, &shape)?,
@@ -328,7 +376,9 @@ mod tests {
             query_tokens: usize::MAX,
             input_bytes: 0,
             attention_bytes: 0,
-            attention_is_complete: true,
+
+
+attention_is_complete: true,
         };
         assert!(capture_workspace_bytes(plan(), true, &shape).is_err());
         assert!(partitioned_attention_bytes(usize::MAX, 8, 128, 2, 2).is_err());
@@ -351,7 +401,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+
+#[test]
     fn fa3_capture_scratch_uses_schedule_splits_and_only_page_tables_grow_with_context(
     ) -> Result<()> {
         const SPLITS: usize = 32;

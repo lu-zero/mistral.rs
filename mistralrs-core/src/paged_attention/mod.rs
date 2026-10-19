@@ -335,7 +335,9 @@ pub struct PagedAttentionConfig {
     pub(crate) logits_bytes_per_query_token: usize,
     pub(crate) primary_non_attention_memory_reservation_bytes: usize,
     pub(crate) mapped_non_attention_memory_reservation_bytes: usize,
-    pub(crate) encoder_activation_memory_reservation_bytes: usize,
+
+
+pub(crate) encoder_activation_memory_reservation_bytes: usize,
     pub(crate) custom_prefill_mask: bool,
     pub(crate) metal_prefill_mask_is_structured: bool,
 }
@@ -377,7 +379,9 @@ impl PagedAttentionConfig {
             logits_bytes_per_query_token: 0,
             primary_non_attention_memory_reservation_bytes: 0,
             mapped_non_attention_memory_reservation_bytes: 0,
-            encoder_activation_memory_reservation_bytes: 0,
+
+
+encoder_activation_memory_reservation_bytes: 0,
             custom_prefill_mask: false,
             metal_prefill_mask_is_structured: false,
         })
@@ -432,7 +436,9 @@ impl PagedAttentionConfig {
             mapped_activation_bytes: self.mapped_activation_memory_reservation_bytes,
             primary_non_attention_bytes: self.primary_non_attention_memory_reservation_bytes,
             mapped_non_attention_bytes: self.mapped_non_attention_memory_reservation_bytes,
-            encoder_activation_bytes: self.encoder_activation_memory_reservation_bytes,
+
+
+encoder_activation_bytes: self.encoder_activation_memory_reservation_bytes,
             planned_query_tokens: self.planned_query_tokens,
             logits_bytes_per_query_token: self.logits_bytes_per_query_token,
             custom_prefill_mask: self.custom_prefill_mask,

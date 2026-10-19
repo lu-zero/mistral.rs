@@ -78,6 +78,12 @@ impl std::fmt::Display for ForwardWorkspaceBytes {
     }
 }
 
+pub(super) fn forward_workspace_bytes(
+    plan: Option<crate::memory_plan::RuntimeMemoryPlan>,
+    query_tokens: usize,
+    attention_bytes: usize,
+    extra_raw_logit_tokens: usize,
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct ForwardMemoryShape {
     pub query_tokens: usize,
@@ -131,12 +137,27 @@ pub(super) fn forward_workspace_bytes(
         && (!plan.custom_prefill_mask || plan.metal_prefill_mask_is_structured);
     let reserve = |primary| -> Result<usize> {
         let non_attention = plan
-            .non_attention_bytes(primary, shape.query_tokens, shape.sequences)
+            .non_attention_bytes(primary, query_tokens)
+
+.non_attention_bytes(primary, shape.query_tokens, shape.sequences)
             .map_err(candle_core::Error::wrap)?;
         let combined = non_attention
             .checked_add(attention_bytes)
             .ok_or_else(|| candle_core::Error::msg("forward workspace size overflow"))?;
-        let text = if attention_is_complete {
+        if attention_is_complete {
+            Ok(combined)
+        } else {
+            Ok(plan
+                .activation_bytes(primary, query_tokens)
+                .map_err(candle_core::Error::wrap)?
+                .max(combined))
+        }
+    };
+    let extra_logits = extra_raw_logit_tokens
+        .checked_mul(plan.logits_bytes_per_query_token)
+        .ok_or_else(|| candle_core::Error::msg("raw logits workspace overflow"))?;
+
+let text = if attention_is_complete {
             combined
         } else {
             plan.activation_bytes(primary, shape.query_tokens)
@@ -220,7 +241,9 @@ pub(super) fn enforce_memory_goal(
         })();
         match result {
             Ok((bytes, (available, total, allocated))) => {
-                if bytes > available {
+
+
+if bytes > available {
                     tracing::debug!(
                         device = ?device.location(),
                         required_bytes = bytes,
@@ -366,14 +389,18 @@ mod tests {
             mapped_activation_bytes: 80,
             primary_non_attention_bytes: 60,
             mapped_non_attention_bytes: 50,
-            encoder_activation_bytes: 0,
+
+
+encoder_activation_bytes: 0,
             custom_prefill_mask: false,
             metal_prefill_mask_is_structured: false,
             planned_query_tokens: 10,
         }
     }
 
-    fn text_shape(query_tokens: usize, extra_logit_tokens: usize) -> ForwardMemoryShape {
+
+
+fn text_shape(query_tokens: usize, extra_logit_tokens: usize) -> ForwardMemoryShape {
         ForwardMemoryShape {
             query_tokens,
             sequences: 1,
@@ -467,7 +494,6 @@ mod tests {
             );
         }
     }
-
     #[test]
     fn activation_reserve_replaces_overlapping_attention_per_device() {
         let plan = asymmetric_plan();
@@ -498,19 +524,29 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                forward_workspace_bytes(Some(plan), text_shape(tokens, 0), attention, false)
+                forward_workspace_bytes(Some(plan), tokens, attention, 0, false).unwrap(),
+
+forward_workspace_bytes(Some(plan), text_shape(tokens, 0), attention, false)
                     .unwrap(),
                 expected
             );
         }
         assert_eq!(
-            forward_workspace_bytes(None, text_shape(10, 0), 70, false).unwrap(),
+            forward_workspace_bytes(None, 10, 70, 0, false).unwrap(),
+
+forward_workspace_bytes(None, text_shape(10, 0), 70, false).unwrap(),
             ForwardWorkspaceBytes {
                 primary: 70,
                 mapped: 70
             }
         );
-        assert!(forward_workspace_bytes(Some(plan), text_shape(10, 0), usize::MAX, false).is_err());
+        assert!(forward_workspace_bytes(Some(plan), 10, usize::MAX, 0, false).is_err());
+    }
+
+    #[test]
+    fn complete_attention_uses_actual_workspace_and_preserves_non_attention_floor() {
+
+assert!(forward_workspace_bytes(Some(plan), text_shape(10, 0), usize::MAX, false).is_err());
     }
 
     #[test]
@@ -520,7 +556,12 @@ mod tests {
         plan.mapped_activation_bytes = 8_000;
         for tokens in [1, 10] {
             assert_eq!(
-                forward_workspace_bytes(Some(plan), text_shape(tokens, 0), 20, true).unwrap(),
+                forward_workspace_bytes(Some(plan), tokens, 20, 0, true).unwrap(),
+                ForwardWorkspaceBytes {
+                    primary: 80,
+                    mapped: 70
+
+forward_workspace_bytes(Some(plan), text_shape(tokens, 0), 20, true).unwrap(),
                 ForwardWorkspaceBytes {
                     primary: 20 + tokens * 6,
                     mapped: 20 + tokens * 5
@@ -528,14 +569,18 @@ mod tests {
             );
         }
         assert_eq!(
-            forward_workspace_bytes(Some(plan), text_shape(20, 0), 20, true).unwrap(),
+            forward_workspace_bytes(Some(plan), 20, 20, 0, true).unwrap(),
+
+forward_workspace_bytes(Some(plan), text_shape(20, 0), 20, true).unwrap(),
             ForwardWorkspaceBytes {
                 primary: 140,
                 mapped: 120
             }
         );
         assert_eq!(
-            forward_workspace_bytes(Some(plan), text_shape(1, 0), 20, false).unwrap(),
+            forward_workspace_bytes(Some(plan), 1, 20, 0, false).unwrap(),
+
+forward_workspace_bytes(Some(plan), text_shape(1, 0), 20, false).unwrap(),
             ForwardWorkspaceBytes {
                 primary: 10_000,
                 mapped: 8_000
@@ -543,7 +588,15 @@ mod tests {
         );
         plan.logits_bytes_per_query_token = 7;
         assert_eq!(
-            forward_workspace_bytes(Some(plan), text_shape(1, 8), 20, true).unwrap(),
+            forward_workspace_bytes(Some(plan), 1, 20, 8, true).unwrap(),
+            ForwardWorkspaceBytes {
+                primary: 136,
+                mapped: 70
+            }
+        );
+        assert!(forward_workspace_bytes(Some(plan), 1, usize::MAX, 0, true).is_err());
+
+forward_workspace_bytes(Some(plan), text_shape(1, 8), 20, true).unwrap(),
             ForwardWorkspaceBytes {
                 primary: 89,
                 mapped: 25
@@ -559,14 +612,21 @@ mod tests {
         plan.mapped_activation_bytes = 8_000;
         plan.custom_prefill_mask = true;
         assert_eq!(
-            forward_workspace_bytes(Some(plan), text_shape(1, 0), 20, true).unwrap(),
+            forward_workspace_bytes(Some(plan), 1, 20, 0, true).unwrap(),
+
+forward_workspace_bytes(Some(plan), text_shape(1, 0), 20, true).unwrap(),
             ForwardWorkspaceBytes {
                 primary: 10_000,
                 mapped: 8_000
             }
         );
         assert_eq!(
-            forward_workspace_bytes(Some(plan), text_shape(1, 0), 15_000, true).unwrap(),
+            forward_workspace_bytes(Some(plan), 1, 15_000, 0, true).unwrap(),
+            ForwardWorkspaceBytes {
+                primary: 15_060,
+                mapped: 15_050
+
+forward_workspace_bytes(Some(plan), text_shape(1, 0), 15_000, true).unwrap(),
             ForwardWorkspaceBytes {
                 primary: 15_006,
                 mapped: 15_005
@@ -574,7 +634,12 @@ mod tests {
         );
         plan.metal_prefill_mask_is_structured = true;
         assert_eq!(
-            forward_workspace_bytes(Some(plan), text_shape(1, 0), 20, true).unwrap(),
+            forward_workspace_bytes(Some(plan), 1, 20, 0, true).unwrap(),
+            ForwardWorkspaceBytes {
+                primary: 80,
+                mapped: 70
+
+forward_workspace_bytes(Some(plan), text_shape(1, 0), 20, true).unwrap(),
             ForwardWorkspaceBytes {
                 primary: 26,
                 mapped: 25
@@ -584,7 +649,9 @@ mod tests {
 
     #[test]
     fn asymmetric_loaded_devices_admit_their_own_reservations() {
-        let workspace =
+        let workspace = forward_workspace_bytes(Some(asymmetric_plan()), 10, 20, 0, false).unwrap();
+
+let workspace =
             forward_workspace_bytes(Some(asymmetric_plan()), text_shape(10, 0), 20, false).unwrap();
         let fits = |devices: &[(bool, usize)]| {
             let pressure = devices.iter().any(|&(primary, free)| {
@@ -618,7 +685,9 @@ mod tests {
     fn raw_logits_are_reserved_only_on_the_primary_device() {
         let mut plan = asymmetric_plan();
         plan.logits_bytes_per_query_token = 7;
-        let workspace = forward_workspace_bytes(Some(plan), text_shape(10, 8), 20, false).unwrap();
+        let workspace = forward_workspace_bytes(Some(plan), 10, 20, 8, false).unwrap();
+
+let workspace = forward_workspace_bytes(Some(plan), text_shape(10, 8), 20, false).unwrap();
         assert_eq!(
             workspace,
             ForwardWorkspaceBytes {
@@ -626,7 +695,11 @@ mod tests {
                 mapped: 80
             }
         );
-        assert!(
+        assert!(forward_workspace_bytes(Some(plan), 10, 20, usize::MAX, false).is_err());
+        plan.logits_bytes_per_query_token = usize::MAX;
+        assert!(forward_workspace_bytes(Some(plan), 10, 20, 1, false).is_err());
+
+assert!(
             forward_workspace_bytes(Some(plan), text_shape(10, usize::MAX), 20, false).is_err()
         );
         plan.logits_bytes_per_query_token = usize::MAX;

@@ -129,7 +129,9 @@ pub struct RuntimeMemoryPlan {
     pub mapped_activation_bytes: usize,
     pub primary_non_attention_bytes: usize,
     pub mapped_non_attention_bytes: usize,
-    pub encoder_activation_bytes: usize,
+
+
+pub encoder_activation_bytes: usize,
     pub planned_query_tokens: usize,
     pub logits_bytes_per_query_token: usize,
     pub custom_prefill_mask: bool,
@@ -148,7 +150,17 @@ impl RuntimeMemoryPlan {
         )
     }
 
-    pub fn non_attention_bytes(
+    pub fn non_attention_bytes(self, primary: bool, query_tokens: usize) -> Result<usize> {
+        self.scale(
+            if primary {
+                self.primary_non_attention_bytes
+            } else {
+                self.mapped_non_attention_bytes
+            },
+            query_tokens,
+        )
+
+pub fn non_attention_bytes(
         self,
         primary: bool,
         query_tokens: usize,

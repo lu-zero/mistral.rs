@@ -969,7 +969,9 @@ pub(crate) fn prompt_prefill_workspace(
     model: Option<&dyn ModelConfigLike>,
     input: PromptPrefillWorkspaceInput<'_>,
 ) -> Result<PromptPrefillWorkspace> {
-    if !input.requires_prefix_attention
+    if !input.requires_prefix_attention && (!input.device_is_metal || model.is_none()) {
+
+if !input.requires_prefix_attention
         && ((!input.device_is_metal && !input.device_is_cuda) || model.is_none())
     {
         return Ok(PromptPrefillWorkspace::default());
@@ -1014,7 +1016,9 @@ pub(crate) fn prompt_prefill_workspace(
     let mut fa3_pool = crate::flashinfer::Fa3PrefillPoolBytes::default();
     let mut max_layer_transient = 0usize;
     let mut gather_workspace_bytes = 0usize;
-    let mut attention_is_complete = input.device_is_metal || input.device_is_cuda;
+    let mut attention_is_complete = input.device_is_metal;
+
+let mut attention_is_complete = input.device_is_metal || input.device_is_cuda;
     #[cfg(feature = "metal")]
     let mut native_workspace_bytes = 0usize;
     #[cfg(feature = "metal")]
@@ -1061,7 +1065,10 @@ pub(crate) fn prompt_prefill_workspace(
                 continue;
             }
         }
-        if !input.requires_prefix_attention && !input.device_is_cuda {
+        attention_is_complete = false;
+        if !input.requires_prefix_attention {
+
+if !input.requires_prefix_attention && !input.device_is_cuda {
             attention_is_complete = false;
             continue;
         }
@@ -1112,7 +1119,9 @@ pub(crate) fn prompt_prefill_workspace(
         if input.device_is_metal {
             retained_mask_keys.insert(metal_mask_key(model, layer_idx, features));
         }
-        attention_is_complete &= plan_input.is_some_and(|plan| {
+
+
+attention_is_complete &= plan_input.is_some_and(|plan| {
             plan.device_is_cuda
                 && !plan.has_custom_mask
                 && !plan.has_noncausal_mm_context
@@ -1634,6 +1643,144 @@ mod tests {
             ..packed
         })
         .is_err());
+    }
+
+    fn metal_gather_request<'a>(
+        query_lens: &'a [usize],
+        kv_lens: &'a [usize],
+        head_dim: usize,
+    ) -> GatherPrefillWorkspaceRequest<'a> {
+        GatherPrefillWorkspaceRequest {
+            device_is_metal: true,
+            packed_queries: false,
+            metal_mask_is_compatible: true,
+            query_lens,
+            kv_lens,
+            q_heads: 8,
+            kv_heads: 2,
+            k_head_dim: head_dim,
+            v_head_dim: head_dim,
+            dtype: DType::BF16,
+            plan_input: PrefixPrefillPlanInput {
+                device_is_cuda: false,
+                dtype: DType::BF16,
+                cache_dtype: DType::BF16,
+                has_alibi: false,
+                has_sinks: false,
+                has_custom_mask: false,
+                causality_known: true,
+                head_size: head_dim,
+                has_softcap: false,
+                has_sliding_window: false,
+                query_layout_is_dense: true,
+                query_len: query_lens.iter().copied().max().unwrap(),
+                q_heads: 8,
+                kv_heads: 2,
+                writes_cache: true,
+                is_causal: true,
+                has_noncausal_mm_context: false,
+                fa3_supported: false,
+                block_size: 32,
+                attention_backend: AttentionBackendKind::Standard,
+            },
+        }
+    }
+
+    #[test]
+    fn metal_fused_gather_reserves_kv_and_masks_without_eager_scores() -> Result<()> {
+        let request = metal_gather_request(&[64, 32], &[512, 256], 128);
+        assert_eq!(
+            gather_attention_backend(request),
+            GatherAttentionBackend::MetalFused
+        );
+        let bytes = gather_prefill_workspace_for_lengths(request)?;
+        let gathered_kv = (512 + 256) * 2 * 128 * 2 * 2;
+        let padded_kv = 2 * 512 * 2 * 128 * 2 * 2;
+        let output = 2 * 64 * 8 * 128 * 2;
+        let mask = 2 * 64 * 512 * (4 + 2);
+        assert_eq!(bytes, gathered_kv + 3 * padded_kv + 3 * output + mask);
+        let twice_heads = GatherPrefillWorkspaceRequest {
+            q_heads: 16,
+            ..request
+        };
+        assert_eq!(
+            gather_prefill_workspace_for_lengths(twice_heads)? - bytes,
+            3 * output
+        );
+        let eager = GatherPrefillWorkspaceRequest {
+            metal_mask_is_compatible: false,
+            ..request
+        };
+        assert!(gather_prefill_workspace_for_lengths(eager)? > bytes);
+        for rejected in [
+            GatherPrefillWorkspaceRequest {
+                packed_queries: true,
+                ..request
+            },
+            GatherPrefillWorkspaceRequest {
+                query_lens: &[1, 1],
+                ..request
+            },
+            GatherPrefillWorkspaceRequest {
+                v_head_dim: 256,
+                ..request
+            },
+            GatherPrefillWorkspaceRequest {
+                device_is_metal: false,
+                ..request
+            },
+            GatherPrefillWorkspaceRequest {
+                plan_input: PrefixPrefillPlanInput {
+                    has_sinks: true,
+                    ..request.plan_input
+                },
+                ..request
+            },
+        ] {
+            assert_eq!(
+                gather_attention_backend(rejected),
+                GatherAttentionBackend::Conservative
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    fn metal_d512_gather_covers_extension_scratch_and_aligned_capacity_boundaries() -> Result<()> {
+        use mistralrs_quant::metal_kernels::{flash_attn_ext_blk_scratch_size, FA_NCPSG};
+
+        let request = metal_gather_request(&[16], &[65], 512);
+        assert_eq!(
+            gather_attention_backend(request),
+            GatherAttentionBackend::MetalD512
+        );
+        let gathered_kv = 65 * 2 * 512 * 2 * 2;
+        let output = 16 * 8 * 512 * 2;
+        let masks = 16 * 65 * (4 + 2);
+        let f16_mask = 16 * 65 * 2;
+        let tail = 2 * 512 * 2 * FA_NCPSG * 2 + 2 * FA_NCPSG * 16;
+        let blocks = flash_attn_ext_blk_scratch_size(16, 65, 1, 1);
+        assert_eq!(
+            gather_prefill_workspace_for_lengths(request)?,
+            4 * gathered_kv + 3 * output + masks + f16_mask + tail + blocks
+        );
+        let mut previous = 0;
+        for context in 63..=129 {
+            let bytes = gather_prefill_workspace_for_lengths(GatherPrefillWorkspaceRequest {
+                kv_lens: &[context],
+                ..request
+            })?;
+            assert!(bytes >= previous);
+            previous = bytes;
+        }
+        for dtype in [DType::F16, DType::F32] {
+            assert_eq!(
+                gather_attention_backend(GatherPrefillWorkspaceRequest { dtype, ..request }),
+                GatherAttentionBackend::Conservative
+            );
+        }
+        Ok(())
     }
 
     #[test]
