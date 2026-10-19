@@ -57,8 +57,6 @@ To set a budget, import `mistralrs::MemoryGoal` and use `.with_memory_goal(Memor
 </TabItem>
 </Tabs>
 
-
-
 ## Upgrading from 0.9.4
 
 Version 0.9.5 enables paging by default on supported Metal models and replaces the old memory and automatic-device-mapping hints with a shared memory planner. Omit memory overrides to use automatic sizing. To retain the standard cache on Metal, use `--paged-attn off`, Python's `no_paged_attn=True`, or Rust's `.without_paged_attn()`.
@@ -100,6 +98,7 @@ Replace `PagedAttentionMetaBuilder::with_gpu_memory` with `.with_memory_goal`, a
 `PagedAttentionMetaBuilder::default()` now uses `MemoryGoal::Auto` instead of a 4,096-token cache. Set `MemoryGoal::KvTokens(4096)` explicitly if that is the capacity you need. `ModelBuilder` also accepts `.with_memory_goal(...)` directly.
 
 Remove `DeviceMapSetting::Auto(...)` overrides to use automatic placement. For manual placement, `.with_device_mapping(...)` now accepts `DeviceMapMetadata` directly, without a `DeviceMapSetting::Map(...)` wrapper. See [layer mapping](/guides/perf/distributed-inference/#layer-mapping-cuda-p2p) for an example.
+
 ## Memory budget
 
 Leave memory settings unset to use `Auto`. The engine leaves headroom for the system, reserves space for model weights and temporary computation, and uses the remaining budget for the KV cache. CLI, Python, and Rust use the same policy.
