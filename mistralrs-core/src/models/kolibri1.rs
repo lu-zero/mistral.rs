@@ -20,7 +20,7 @@
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
-use candle_core::{DType, Device, Module, Result, Tensor};
+use candle_core::{DType, Device, IndexOp, Module, Result, Tensor};
 use mistralrs_quant::{
     ColumnParallelLayer, QuantMethod, QuantizedConfig, ReplicatedLayer, RowParallelLayer,
     ShardedVarBuilder,
@@ -532,9 +532,95 @@ static ROUTED_IDS: std::sync::OnceLock<std::sync::Mutex<Vec<Vec<Vec<u32>>>>> =
     std::sync::OnceLock::new();
 /// `(logits, bias)` at layer 0, so the selection scores can be compared against the oracle's
 /// rather than inferred from which ids came out.
-static LAYER0_SCORES: std::sync::OnceLock<std::sync::Mutex<Vec<(Vec<f32>, Vec<f32>)>>> =
-    std::sync::OnceLock::new();
+type Layer0Scores = std::sync::Mutex<Vec<(Vec<f32>, Vec<f32>)>>;
+static LAYER0_SCORES: std::sync::OnceLock<Layer0Scores> = std::sync::OnceLock::new();
 static TRACE_IDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Per-layer taps, for diffing this forward against another implementation.
+///
+/// Enabled by `MISTRALRS_DUMP_LAYERS=1`, with the positions to tap in
+/// `MISTRALRS_DUMP_POSITIONS` (default `0,5`) and the output path in `MISTRALRS_DUMP_OUT`.
+///
+/// A tap is one scalar: the row is `(layer, quantity, position, hidden_index, value)`. The
+/// hidden index is a fifth column because "value" alone does not identify a component of the
+/// hidden state, and a per-layer dump is only useful if it can be compared elementwise.
+type LayerTap = (usize, &'static str, usize, usize, f32);
+static LAYER_TAPS: std::sync::OnceLock<std::sync::Mutex<Vec<LayerTap>>> =
+    std::sync::OnceLock::new();
+
+/// Whether layer taps are being recorded. Resolved once.
+fn layer_taps_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("MISTRALRS_DUMP_LAYERS")
+            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    })
+}
+
+/// The positions to tap. Resolved once.
+fn layer_tap_positions() -> &'static [usize] {
+    static POS: std::sync::OnceLock<Vec<usize>> = std::sync::OnceLock::new();
+    POS.get_or_init(|| {
+        std::env::var("MISTRALRS_DUMP_POSITIONS")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .filter_map(|s| s.trim().parse::<usize>().ok())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v: &Vec<usize>| !v.is_empty())
+            .unwrap_or_else(|| vec![0, 5])
+    })
+}
+
+/// Record `t`'s values at the tapped positions.
+///
+/// `t` is `[1, seq, hidden]`. The copy to the host is the whole tensor, which is only
+/// expensive for long sequences; the dump path is a short teacher-forced prefill.
+fn tap_layer(t: &Tensor, layer: usize, quantity: &'static str) {
+    if !layer_taps_enabled() {
+        return;
+    }
+    // `t` is `[1, seq, hidden]`; drop the batch dim so the rows are positions.
+    let Ok(rows) = t
+        .to_dtype(DType::F32)
+        .and_then(|x| x.i(0))
+        .and_then(|x| x.to_vec2::<f32>())
+    else {
+        return;
+    };
+    let mut taps = match LAYER_TAPS
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+    {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    for &p in layer_tap_positions() {
+        let Some(row) = rows.get(p) else { continue };
+        for (h, v) in row.iter().enumerate() {
+            taps.push((layer, quantity, p, h, *v));
+        }
+    }
+}
+
+/// Write the recorded taps as a TSV: `layer, quantity, position, hidden_index, value`.
+fn write_layer_taps(path: &str) -> std::io::Result<usize> {
+    let mut out = String::new();
+    let mut n = 0usize;
+    if let Some(taps) = LAYER_TAPS.get() {
+        if let Ok(taps) = taps.lock() {
+            for (layer, quantity, position, hidden, value) in taps.iter() {
+                out.push_str(&format!(
+                    "{layer}\t{quantity}\t{position}\t{hidden}\t{value}\n"
+                ));
+                n += 1;
+            }
+        }
+    }
+    std::fs::write(path, out)?;
+    Ok(n)
+}
 
 fn routed_ids() -> Option<&'static std::sync::Mutex<Vec<Vec<Vec<u32>>>>> {
     TRACE_IDS
@@ -838,14 +924,18 @@ impl DecoderLayer {
                 Some(res) => self.input_layernorm.forward_add_rms_norm(xs, res)?,
             }
         };
+        // The incoming residual, before this layer adds to it. For layer 0 it is the embedding.
+        tap_layer(residual.as_ref().unwrap_or(xs), layer_idx, "residual_in");
 
         let attn = self
             .self_attn
             .forward(&dhn, attention_mask, kv_cache, ctx, layer_idx)?;
+        tap_layer(&attn, layer_idx, "attn_out_pre_norm");
         let (res, dhn2) = {
             let _p = crate::utils::decode_prof::profile(crate::utils::decode_prof::Phase::Norms);
             // post_attn_norm carries no residual: its output is a delta, not a normalized stream.
             let attn_n = self.post_attn_norm.forward(&attn)?;
+            tap_layer(&attn_n, layer_idx, "attn_post_norm");
             self.post_attention_layernorm
                 .forward_add_rms_norm(&attn_n, &res)?
         };
@@ -854,7 +944,17 @@ impl DecoderLayer {
         // Likewise for post_ffn_norm; this becomes the next layer's block output.
         *residual = Some(res);
         let _p = crate::utils::decode_prof::profile(crate::utils::decode_prof::Phase::Norms);
-        self.post_ffn_norm.forward(&moe)
+        let ff = self.post_ffn_norm.forward(&moe)?;
+        tap_layer(&ff, layer_idx, "ffn_post_norm");
+        // The reference's `l_out` is the post-normed block output plus the residual that was
+        // accumulated so far, added after the post-norm. Here the residual is carried
+        // separately and added by the next layer's norm, so `l_out` is reconstructed.
+        if let Some(res) = residual.as_ref() {
+            if let Ok(l_out) = (&ff + res) {
+                tap_layer(&l_out, layer_idx, "l_out");
+            }
+        }
+        Ok(ff)
     }
 }
 
@@ -2017,14 +2117,11 @@ mod tests {
         eprintln!("[probe] loading {}", model_dir.display());
         let mut model = load_real_model(&model_dir)?;
 
-        // `Some` means "assert this".
-        //
-        // Australia was left unasserted for a while, because the answer depended on the
-        // router's arithmetic: it came out "Sydney" and "Canberra" depending on whether the
-        // router logits were bf16-valued. The cause was not the router dtype - it was the
-        // RMSNorm, whose fused kernel rounds the scale to bf16 before dividing. That is fixed
-        // in layers.rs, and with the fix this prompt answers "Canberra", which is what
-        // llama.cpp, the vLLM primary and the reference goldens all produce.
+        // `Some` means "assert this". Australia used to be left unasserted because the answer
+        // depended on the router's arithmetic: it came out "Sydney" with the fused RMSNorm and
+        // "Canberra" with an f32 scale, which is the amplification in todo/mistralrs/07 showing up
+        // as a semantic answer rather than as a fingerprint. The f32 scale is the one that
+        // matches the reference, so it is asserted now.
         for (text, want) in [
             ("The capital of France is", Some("Paris")),
             ("The capital of Australia is", Some("Canberra")),
@@ -2081,7 +2178,13 @@ mod tests {
         let mut model = load_real_model(&model_dir)?;
         crate::utils::decode_prof::enable();
 
-        let prompt: Vec<u32> = (0..64).map(|i| (i * 137 + 91) as u32).collect();
+        // The prompt length is configurable so the prefill can be matched against another
+        // implementation's, e.g. llama-bench's pp512.
+        let prompt_len: usize = std::env::var("KOLIBRI1_BENCH_PROMPT_TOKENS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(64);
+        let prompt: Vec<u32> = (0..prompt_len).map(|i| (i * 137 + 91) as u32).collect();
         let mut timed = Vec::with_capacity(steps);
 
         let prefill_start = std::time::Instant::now();
@@ -2155,10 +2258,22 @@ mod tests {
             .map(|v| v.as_u64().expect("id") as u32)
             .collect();
 
+        // `KOLIBRI1_IDS_STEPS` chains decode steps instead of stopping at step 0. Chaining is
+        // what makes the expert reuse distance measurable: a cache's value depends on how far
+        // back an expert resurfaces, and that is only observable across consecutive steps.
+        let steps: usize = std::env::var("KOLIBRI1_IDS_STEPS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+
         let mut model = load_real_model(&model_dir)?;
         TRACE_IDS.store(true, std::sync::atomic::Ordering::Relaxed);
         let t = Tensor::from_vec(ids.clone(), (1, ids.len()), &Device::Cpu)?;
-        let next = prefill_and_decode(&mut model, &t, 0)?;
+        let mut next = prefill_and_decode(&mut model, &t, 0)?;
+        for step in 0..steps {
+            let one = Tensor::from_vec(vec![next], (1, 1), &Device::Cpu)?;
+            next = prefill_and_decode(&mut model, &one, ids.len() + step)?;
+        }
 
         let recorded = ROUTED_IDS
             .get()
@@ -2169,6 +2284,8 @@ mod tests {
         let out = serde_json::json!({
             "prompt": prompt["prompt"],
             "input_ids": ids,
+            "chained_steps": steps,
+            "forwards": recorded.len() / (steps + 1),
             "n_layers": recorded.len(),
             "topk_ids_per_layer": recorded,
             "argmax": next,
@@ -2191,6 +2308,115 @@ mod tests {
             recorded.first().map_or(0, Vec::len)
         );
         println!("[ids] wrote {path}");
+        Ok(())
+    }
+
+    /// Dump per-layer taps, so this forward can be diffed against another implementation.
+    ///
+    /// Needs `MISTRALRS_DUMP_LAYERS=1`; the output path is `MISTRALRS_DUMP_OUT` and the
+    /// positions are `MISTRALRS_DUMP_POSITIONS` (default `0,5`).
+    #[test]
+    #[ignore = "loads a Kolibri-1 checkpoint"]
+    fn kolibri1_dump_layer_taps() -> anyhow::Result<()> {
+        let (model_dir, _) = golden_paths();
+        let mut model = load_real_model(&model_dir)?;
+        // The goldens' own ids for "alpha beta gamma delta epsilon zeta", prompt only, no
+        // continuation: position 0's context is a single token, so a fault there is isolated.
+        let ids: Vec<u32> = vec![5249, 25079, 74493, 15774, 121598, 116026];
+        let _ = teacher_forced_logits(&mut model, &ids)?;
+        let path = std::env::var("MISTRALRS_DUMP_OUT")
+            .unwrap_or_else(|_| "/tmp/opencode/kolibri1_layer_taps.tsv".to_string());
+        let n = write_layer_taps(&path)?;
+        println!("[taps] wrote {n} rows to {path}");
+        Ok(())
+    }
+
+    /// Free generation and teacher-forcing are the same computation, so they must agree.
+    ///
+    /// No reference oracle is needed: the chain the incremental path produces is the
+    /// reference for the prefill path. If the two disagree, the prefill is the wrong one,
+    /// because the incremental path is what the model actually does at serving time.
+    ///
+    /// The offset scan reports the direction and size of any misalignment rather than just
+    /// failing, because a one-position offset is the specific failure this exists to catch.
+    #[test]
+    #[ignore = "loads a Kolibri-1 checkpoint"]
+    fn kolibri1_prefill_agrees_with_incremental() -> anyhow::Result<()> {
+        let (model_dir, goldens_path) = golden_paths();
+        let goldens: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&goldens_path)?)?;
+        // Prompt 2 of the goldens: "The capital of Australia is", whose continuation is varied
+        // rather than a repeated token. A degenerate chain cannot show a position shift,
+        // because every position looks the same.
+        let prompt: Vec<u32> = goldens["prompts"][2]["input_ids"]
+            .as_array()
+            .expect("input_ids")
+            .iter()
+            .map(|v| v.as_u64().expect("token id") as u32)
+            .collect();
+
+        let mut model = load_real_model(&model_dir)?;
+        let n_new = 24usize;
+
+        // Incremental: the KV cache carries the history, one token at a time.
+        let mut chain: Vec<u32> = Vec::new();
+        {
+            let prompt_ids = Tensor::from_vec(prompt.clone(), (1, prompt.len()), &Device::Cpu)?;
+            let mut next = prefill_and_decode(&mut model, &prompt_ids, 0)?;
+            for step in 0..n_new {
+                chain.push(next);
+                let ids = Tensor::from_vec(vec![next], (1, 1), &Device::Cpu)?;
+                next = prefill_and_decode(&mut model, &ids, prompt.len() + step)?;
+            }
+        }
+        println!("[align] chain: {chain:?}");
+
+        // Teacher-forced over the same chain.
+        let mut ids = prompt.clone();
+        ids.extend_from_slice(&chain[..chain.len() - 1]);
+        let rows = teacher_forced_logits(&mut model, &ids)?;
+
+        // Row `prompt.len() - 1 + k` predicts `ids[prompt.len() + k]`, which is `chain[k]`.
+        // A prefill that is one position behind would make it predict `chain[k - 1]`.
+        let mut best = (0i64, 0usize, 0usize);
+        for offset in -2i64..=2 {
+            let (mut hits, mut tot) = (0usize, 0usize);
+            for k in 0..(chain.len() - 1) {
+                let kk = k as i64 + offset;
+                if kk < 0 || kk as usize >= chain.len() {
+                    continue;
+                }
+                let row_idx = prompt.len() as i64 - 1 + k as i64;
+                if row_idx < 0 || row_idx as usize >= rows.len() {
+                    continue;
+                }
+                let row = &rows[row_idx as usize];
+                let (argmax, _) =
+                    row.iter()
+                        .enumerate()
+                        .fold((0usize, f32::NEG_INFINITY), |(bi, bv), (i, v)| {
+                            if *v > bv {
+                                (i, *v)
+                            } else {
+                                (bi, bv)
+                            }
+                        });
+                tot += 1;
+                if argmax as u32 == chain[kk as usize] {
+                    hits += 1;
+                }
+            }
+            println!("  offset {offset:+}: {hits}/{tot}");
+            if hits > best.1 {
+                best = (offset, hits, tot);
+            }
+        }
+        println!("[align] best offset {}: {}/{}", best.0, best.1, best.2);
+        assert_eq!(
+            best.0, 0,
+            "the teacher-forced prefill is offset by {} position(s): row p predicts chain[p+{}] rather than chain[p+1]",
+            best.0, best.0
+        );
         Ok(())
     }
 
