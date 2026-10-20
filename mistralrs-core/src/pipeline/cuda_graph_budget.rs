@@ -7,12 +7,6 @@ use crate::{memory_plan::RuntimeMemoryPlan, utils::memory_usage::DeviceMemory};
 #[cfg(any(target_family = "unix", test))]
 const FA3_SCHEDULER_BATCH_ALIGNMENT: usize = 4;
 
-use std::mem::size_of;
-
-use crate::{memory_plan::RuntimeMemoryPlan, utils::memory_usage::DeviceMemory};
-
-#[cfg(any(target_family = "unix", test))]
-const FA3_SCHEDULER_BATCH_ALIGNMENT: usize = 4;
 pub(super) struct CaptureMemoryShape {
     pub query_tokens: usize,
     pub input_bytes: usize,
@@ -37,21 +31,6 @@ pub(super) fn capture_workspace_bytes(
         )
     };
     let attention = if shape.attention_is_complete {
-        shape.attention_bytes
-    } else {
-        baseline
-            .saturating_sub(non_attention)
-            .max(shape.attention_bytes)
-    };
-
-
-let attention = baseline
-        .saturating_sub(non_attention)
-        .max(shape.attention_bytes);
-    scaled_non_attention
-        .max(logits)
-
-let attention = if shape.attention_is_complete {
         shape.attention_bytes
     } else {
         baseline
@@ -190,33 +169,11 @@ mod tests {
 
     #[test]
     fn complete_capture_uses_decode_workspace_and_excludes_encoder_reservations() -> Result<()> {
-
-fn capture_preserves_attention_scratch_but_scales_decode_activations() -> Result<()> {
-
-fn complete_capture_uses_decode_workspace_and_excludes_encoder_reservations() -> Result<()> {
         let shape = CaptureMemoryShape {
             query_tokens: 8,
             input_bytes: 32,
             attention_bytes: GIB,
             attention_is_complete: true,
-        };
-        assert_eq!(
-            capture_workspace_bytes(plan(), true, &shape)?,
-            GIB + 24 * 1024 * 1024 + 32
-        );
-        let mut larger_prefill = plan();
-        larger_prefill.primary_activation_bytes = 100 * GIB;
-        larger_prefill.encoder_activation_bytes = 64 * GIB;
-        assert_eq!(
-            capture_workspace_bytes(larger_prefill, true, &shape)?,
-            capture_workspace_bytes(plan(), true, &shape)?
-        );
-        let shape = CaptureMemoryShape {
-
-
-attention_bytes: 3 * GIB,
-
-attention_is_complete: true,
         };
         assert_eq!(
             capture_workspace_bytes(plan(), true, &shape)?,
@@ -236,20 +193,12 @@ attention_is_complete: true,
         assert_eq!(
             capture_workspace_bytes(plan(), true, &shape)?,
             2 * GIB + 24 * 1024 * 1024 + 32
-
-3 * GIB + 16 * 1024 * 1024 + 32
-
-2 * GIB + 24 * 1024 * 1024 + 32
         );
         Ok(())
     }
 
     #[test]
     fn capture_adds_all_query_logits_to_text_activations() -> Result<()> {
-
-fn capture_reserves_full_logits_rows_when_prefill_scaling_is_smaller() -> Result<()> {
-
-fn capture_adds_all_query_logits_to_text_activations() -> Result<()> {
         let mut plan = plan();
         plan.primary_non_attention_bytes = GIB;
         plan.primary_activation_bytes = GIB;
@@ -258,14 +207,6 @@ fn capture_adds_all_query_logits_to_text_activations() -> Result<()> {
             input_bytes: 0,
             attention_bytes: 0,
             attention_is_complete: true,
-        };
-        assert_eq!(
-            capture_workspace_bytes(plan, true, &shape)?,
-
-
-8 * 1024 * 1024
-
-attention_is_complete: true,
         };
         assert_eq!(
             capture_workspace_bytes(plan, true, &shape)?,
@@ -286,14 +227,6 @@ attention_is_complete: true,
             input_bytes: 32,
             attention_bytes: 1024,
             attention_is_complete: true,
-        };
-        assert_eq!(
-            capture_workspace_bytes(plan, true, &shape)?,
-
-
-8 * 1024 * 1024 + shape.input_bytes + shape.attention_bytes
-
-attention_is_complete: true,
         };
         assert_eq!(
             capture_workspace_bytes(plan, true, &shape)?,

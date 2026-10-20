@@ -1857,18 +1857,6 @@ impl Engine {
                             };
                             let reserve = (|| -> candle_core::Result<_> {
                                 let mut has_encoder_input = false;
-
-let query_tokens = query_lens
-                                    .iter()
-                                    .copied()
-                                    .max()
-                                    .unwrap_or_default()
-                                    .checked_mul(query_lens.len())
-                                    .ok_or_else(|| {
-                                        candle_core::Error::msg("padded query token count overflow")
-                                    })?;
-
-let mut has_encoder_input = false;
                                 let mut return_raw_logits = false;
                                 let mut cold = true;
                                 let mut final_chunk = true;
@@ -1926,25 +1914,6 @@ let mut has_encoder_input = false;
                                 #[cfg(not(feature = "metal"))]
                                 let attention_bytes = workspace.bytes;
                                 let extra_logit_tokens = memory::extra_logit_tokens(
-                                    query_tokens,
-                                    query_lens.len(),
-                                    is_prompt,
-                                    return_raw_logits,
-                                );
-                                let bytes = memory::forward_workspace_bytes(
-                                    memory_plan,
-                                    memory::ForwardMemoryShape {
-                                        query_tokens,
-                                        sequences: query_lens.len(),
-                                        has_encoder_input,
-                                        extra_logit_tokens,
-                                    },
-                                    attention_bytes,
-
-
-extra_raw_logit_tokens,
-
-let extra_logit_tokens = memory::extra_logit_tokens(
                                     query_tokens,
                                     query_lens.len(),
                                     is_prompt,

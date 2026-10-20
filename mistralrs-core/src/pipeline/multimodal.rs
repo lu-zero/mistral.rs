@@ -758,9 +758,6 @@ impl Loader for MultimodalLoader {
         } else if matches!(mapper, DeviceMapSetting::Auto(_)) {
             let params = activation_params.clone();
 
-} else if matches!(mapper, DeviceMapSetting::Auto(_)) {
-            let params = activation_params.clone();
-
             // Initial dtype
             let dtype = dtype.try_into_dtype(&available_devices.iter().collect::<Vec<_>>())?;
 
@@ -1021,10 +1018,6 @@ impl Loader for MultimodalLoader {
                 dtype,
                 &device,
                 &activation_params,
-
-&super::AutoDeviceMapParams::default_multimodal(),
-
-&activation_params,
             )?;
         }
 
@@ -1535,10 +1528,6 @@ impl Loader for MultimodalLoader {
                         &runtime_config,
                         super::loaders::ActivationMemoryContext {
                             params: &activation_params,
-
-params: &super::AutoDeviceMapParams::default_multimodal(),
-
-params: &activation_params,
                             limits: paged_snapshot.execution_limits,
                             dtype,
                             device: &device,
