@@ -117,8 +117,13 @@ impl CudaGraphCaptureMemory<'_> {
                 .ok_or_else(|| candle_core::Error::msg("CUDA capture input size overflow"))?;
         }
         let mut attention_bytes = 0;
+        let mut attention_is_complete = cfg!(target_family = "unix")
+            && self.model.is_some()
+            && self.plan.is_none_or(|plan| !plan.custom_prefill_mask);
         if let Some(model) = self.model {
+            #[cfg(target_family = "unix")]
             let mut fa3_specs = std::collections::HashSet::new();
+
 
 let mut attention_is_complete = cfg!(target_family = "unix")
             && self.model.is_some()
@@ -143,7 +148,9 @@ let mut attention_is_complete = cfg!(target_family = "unix")
                 context
             };
             let partitions = context.div_ceil(PAGED_ATTENTION_PARTITION_SIZE).max(1);
-            for (layer, (key_cache, _)) in self.kv_cache.iter().enumerate().take(model.num_layers())
+            for (layer, (key_cache, _value_cache)) in
+
+for (layer, (key_cache, _)) in self.kv_cache.iter().enumerate().take(model.num_layers())
 
 for (layer, (key_cache, _value_cache)) in
                 self.kv_cache.iter().enumerate().take(model.num_layers())
@@ -154,9 +161,7 @@ for (layer, (key_cache, _value_cache)) in
                 }
                 let flashinfer = model.attention_backend_kind_for_layer(layer)
                     == AttentionBackendKind::FlashInfer;
-
-
-let features = model.prefix_prefill_attention_features(layer);
+                let features = model.prefix_prefill_attention_features(layer);
                 attention_is_complete &= features.is_some_and(|features| {
                     !DecodePlan::requires_host_context_lengths(
                         model.attention_backend_kind_for_layer(layer),
@@ -167,14 +172,17 @@ let features = model.prefix_prefill_attention_features(layer);
                     flashinfer_heads = flashinfer_heads.max(model.num_attn_heads_for_layer(layer));
                     flashinfer_dim = flashinfer_dim.max(model.v_head_dim_for_layer(layer));
                 }
-                #[allow(unused_mut)]
-                let mut layer_partitions = partitions;
                 #[cfg(target_family = "unix")]
-                if key_cache.dtype() == DType::F8E4M3
-                    && model.attention_backend_kind_for_layer(layer)
-                        == AttentionBackendKind::FlashInfer
+                if mistralrs_paged_attn::USE_FA3_FP8_PAGED
+                    && self.activation_dtype == DType::BF16
+                    && flashinfer
+                    && key_cache.dtype() == DType::F8E4M3
+                    && _value_cache.dtype() == DType::F8E4M3
+                    && crate::flashinfer::fa3_device_num_sm(device).is_some()
                 {
-                    layer_partitions =
+
+
+layer_partitions =
                         layer_partitions.max(crate::flashinfer::FA3_DECODE_NUM_SPLITS);
 
 #[cfg(target_family = "unix")]
@@ -240,13 +248,21 @@ let features = model.prefix_prefill_attention_features(layer);
                     query_tokens,
                     model.num_attn_heads_for_layer(layer),
                     model.v_head_dim_for_layer(layer),
-                    layer_partitions.checked_add(1).ok_or_else(|| {
-                        candle_core::Error::msg("CUDA capture partition size overflow")
-                    })?,
-                    DType::F32.size_in_bytes(),
+                    if flashinfer {
+                        CAPTURE_ATTENTION_OUTPUT_BUFFERS
+                    } else {
+                        partitions
+                            .checked_add(CAPTURE_ATTENTION_OUTPUT_BUFFERS)
+                            .ok_or_else(|| {
+                                candle_core::Error::msg("CUDA capture partition size overflow")
+                            })?
+                    },
+                    self.activation_dtype.size_in_bytes(),
                 )
                 .map_err(candle_core::Error::wrap)?;
-                if key_cache.dtype() == DType::F8E4M3 && flashinfer {
+
+
+if key_cache.dtype() == DType::F8E4M3 && flashinfer {
                     if fa3_specs.insert((
                         model.num_attn_heads_for_layer(layer),
                         model.num_kv_heads_for_layer(layer),
@@ -308,9 +324,7 @@ if flashinfer {
             query_tokens,
             input_bytes,
             attention_bytes,
-
-
-attention_is_complete,
+            attention_is_complete,
         })
     }
 

@@ -969,7 +969,9 @@ pub(crate) fn prompt_prefill_workspace(
     model: Option<&dyn ModelConfigLike>,
     input: PromptPrefillWorkspaceInput<'_>,
 ) -> Result<PromptPrefillWorkspace> {
-    if !input.requires_prefix_attention && (!input.device_is_metal || model.is_none()) {
+    if !input.requires_prefix_attention
+
+if !input.requires_prefix_attention && (!input.device_is_metal || model.is_none()) {
 
 if !input.requires_prefix_attention
         && ((!input.device_is_metal && !input.device_is_cuda) || model.is_none())
@@ -1016,7 +1018,9 @@ if !input.requires_prefix_attention
     let mut fa3_pool = crate::flashinfer::Fa3PrefillPoolBytes::default();
     let mut max_layer_transient = 0usize;
     let mut gather_workspace_bytes = 0usize;
-    let mut attention_is_complete = input.device_is_metal;
+    let mut attention_is_complete = input.device_is_metal || input.device_is_cuda;
+
+let mut attention_is_complete = input.device_is_metal;
 
 let mut attention_is_complete = input.device_is_metal || input.device_is_cuda;
     #[cfg(feature = "metal")]
@@ -1065,7 +1069,9 @@ let mut attention_is_complete = input.device_is_metal || input.device_is_cuda;
                 continue;
             }
         }
-        attention_is_complete = false;
+        if !input.requires_prefix_attention && !input.device_is_cuda {
+
+attention_is_complete = false;
         if !input.requires_prefix_attention {
 
 if !input.requires_prefix_attention && !input.device_is_cuda {
@@ -1119,9 +1125,7 @@ if !input.requires_prefix_attention && !input.device_is_cuda {
         if input.device_is_metal {
             retained_mask_keys.insert(metal_mask_key(model, layer_idx, features));
         }
-
-
-attention_is_complete &= plan_input.is_some_and(|plan| {
+        attention_is_complete &= plan_input.is_some_and(|plan| {
             plan.device_is_cuda
                 && !plan.has_custom_mask
                 && !plan.has_noncausal_mm_context
@@ -1643,6 +1647,100 @@ mod tests {
             ..packed
         })
         .is_err());
+    }
+
+    #[test]
+    fn single_token_cuda_prefix_uses_the_same_fused_path_as_longer_queries() -> Result<()> {
+        let input = PrefixPrefillPlanInput {
+            device_is_cuda: true,
+            dtype: DType::BF16,
+            cache_dtype: DType::F8E4M3,
+            has_alibi: false,
+            has_sinks: false,
+            has_custom_mask: false,
+            causality_known: true,
+            head_size: 256,
+            has_softcap: false,
+            has_sliding_window: false,
+            query_layout_is_dense: true,
+            query_len: 1,
+            q_heads: 24,
+            kv_heads: 4,
+            writes_cache: true,
+            is_causal: false,
+            has_noncausal_mm_context: false,
+            fa3_supported: false,
+            block_size: 32,
+            attention_backend: AttentionBackendKind::FlashInfer,
+        };
+        assert!(gather_prefill_uses_packed_varlen_with_backend(
+            input, true, true
+        ));
+        assert!(!gather_prefill_uses_packed_varlen_with_backend(
+            input, false, true
+        ));
+        assert!(!gather_prefill_uses_packed_varlen_with_backend(
+            input, true, false
+        ));
+        for rejected in [
+            PrefixPrefillPlanInput {
+                has_custom_mask: true,
+                ..input
+            },
+            PrefixPrefillPlanInput {
+                has_noncausal_mm_context: true,
+                ..input
+            },
+            PrefixPrefillPlanInput {
+                query_len: 2,
+                ..input
+            },
+            PrefixPrefillPlanInput {
+                has_sliding_window: true,
+                ..input
+            },
+        ] {
+            assert!(!gather_prefill_uses_packed_varlen_with_backend(
+                rejected, true, true
+            ));
+        }
+        let shape = GatherPrefillWorkspaceInput {
+            batch: 1,
+            total_q: 1,
+            max_q: 1,
+            total_kv: 451_008,
+            max_kv: 451_008,
+            q_heads: input.q_heads,
+            kv_heads: input.kv_heads,
+            k_head_dim: input.head_size,
+            v_head_dim: input.head_size,
+            dtype: input.dtype,
+            backend: GatherAttentionBackend::PackedVarlen,
+        };
+        let fused = gather_prefill_workspace_bytes(shape)?;
+        let eager = gather_prefill_workspace_bytes(GatherPrefillWorkspaceInput {
+            backend: GatherAttentionBackend::Conservative,
+            ..shape
+        })?;
+        assert!(fused < eager / 10);
+        assert_eq!(fused, 451_008 * 4 * 256 * 2 * 2 + 3 * 24 * 256 * 2 + 24 * 4);
+        Ok(())
+    }
+
+    #[test]
+    fn cold_cuda_prefill_reports_attention_workspace() -> Result<()> {
+        let model = workspace_model(Some(PrefixPrefillAttentionFeatures::default()));
+        let result = prompt_prefill_workspace(
+            Some(&model),
+            PromptPrefillWorkspaceInput {
+                requires_prefix_attention: false,
+                fa3_num_sm_by_layer: &[],
+                ..workspace_input(&[512], &[512])
+            },
+        )?;
+        assert!(result.bytes > 0);
+        assert_eq!(result.attention_is_complete, crate::using_flash_attn());
+        Ok(())
     }
 
     fn metal_gather_request<'a>(

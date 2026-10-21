@@ -6562,9 +6562,7 @@ impl IsqModelLoader for Qwen3VLLoader {
 }
 
 impl DeviceMappedModelLoader for Qwen3VLLoader {
-
-
-fn non_mapped_activation_memory_bytes(
+    fn non_mapped_activation_memory_bytes(
         &self,
         config: &str,
         params: &AutoDeviceMapParams,
@@ -6579,6 +6577,7 @@ fn non_mapped_activation_memory_bytes(
             device,
         )
     }
+
     fn activation_model_config(&self, config: &str) -> Result<ActivationModelConfig> {
         let cfg: Qwen3VLConfig = serde_json::from_str(config)?;
         let tc = &cfg.text_config;
@@ -7001,9 +7000,7 @@ impl IsqModelLoader for Qwen3VLMoELoader {
 }
 
 impl DeviceMappedModelLoader for Qwen3VLMoELoader {
-
-
-fn non_mapped_activation_memory_bytes(
+    fn non_mapped_activation_memory_bytes(
         &self,
         config: &str,
         params: &AutoDeviceMapParams,
@@ -7018,6 +7015,7 @@ fn non_mapped_activation_memory_bytes(
             device,
         )
     }
+
     fn activation_model_config(&self, config: &str) -> Result<ActivationModelConfig> {
         let cfg: Qwen3VLMoEConfig = serde_json::from_str(config)?;
         let tc = &cfg.text_config;
@@ -7462,9 +7460,7 @@ impl IsqModelLoader for Qwen3_5Loader {
 }
 
 impl DeviceMappedModelLoader for Qwen3_5Loader {
-
-
-fn non_mapped_activation_memory_bytes(
+    fn non_mapped_activation_memory_bytes(
         &self,
         config: &str,
         params: &AutoDeviceMapParams,
@@ -7479,6 +7475,7 @@ fn non_mapped_activation_memory_bytes(
             device,
         )
     }
+
     fn activation_model_config(&self, config: &str) -> Result<ActivationModelConfig> {
         let cfg: Qwen3_5Config = serde_json::from_str(config)?;
         let tc = &cfg.text_config;
@@ -7979,9 +7976,7 @@ impl IsqModelLoader for Qwen3_5MoeLoader {
 }
 
 impl DeviceMappedModelLoader for Qwen3_5MoeLoader {
-
-
-fn non_mapped_activation_memory_bytes(
+    fn non_mapped_activation_memory_bytes(
         &self,
         config: &str,
         params: &AutoDeviceMapParams,
@@ -7996,6 +7991,7 @@ fn non_mapped_activation_memory_bytes(
             device,
         )
     }
+
     fn activation_model_config(&self, config: &str) -> Result<ActivationModelConfig> {
         let cfg: Qwen3_5MoeConfig = serde_json::from_str(config)?;
         let tc = &cfg.text_config;
@@ -10815,9 +10811,7 @@ mod tests {
     }
 
     #[test]
-
-
-fn qwen_vision_memory_matches_auto_loader_and_honors_image_limits() -> Result<()> {
+    fn qwen_vision_memory_matches_auto_loader_and_honors_image_limits() -> Result<()> {
         for (architecture, loader) in [
             (
                 "Qwen3VLForConditionalGeneration",

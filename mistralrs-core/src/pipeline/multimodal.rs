@@ -755,8 +755,8 @@ impl Loader for MultimodalLoader {
             mapper = DeviceMapSetting::DummyNccl {
                 nm_device: available_devices[0].clone(),
             };
-        } else if let DeviceMapSetting::Auto(mut params) = mapper.clone() {
-            params = self.inner.auto_device_map_params(&config, &params)?;
+        } else if matches!(mapper, DeviceMapSetting::Auto(_)) {
+            let params = activation_params.clone();
 
 } else if matches!(mapper, DeviceMapSetting::Auto(_)) {
             let params = activation_params.clone();
@@ -1020,7 +1020,9 @@ impl Loader for MultimodalLoader {
                 paged,
                 dtype,
                 &device,
-                &super::AutoDeviceMapParams::default_multimodal(),
+                &activation_params,
+
+&super::AutoDeviceMapParams::default_multimodal(),
 
 &activation_params,
             )?;
@@ -1532,7 +1534,9 @@ impl Loader for MultimodalLoader {
                         self.inner.as_ref(),
                         &runtime_config,
                         super::loaders::ActivationMemoryContext {
-                            params: &super::AutoDeviceMapParams::default_multimodal(),
+                            params: &activation_params,
+
+params: &super::AutoDeviceMapParams::default_multimodal(),
 
 params: &activation_params,
                             limits: paged_snapshot.execution_limits,
