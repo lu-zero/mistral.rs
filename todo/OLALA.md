@@ -36,8 +36,10 @@ Thread count is the big lever; see `PERF-LEVERS.md`. The NEON scan is only ~2% o
    if the indexed GEMV path ever declines (unquantized fallback). Do not rewrite it.
 2. Re-sweep `MIN_PARALLEL_OUTPUTS` and thread count at 3.4 GHz under `performance`, then
    restore `schedutil`. The previous optima were found at 1.0 GHz.
-3. Look at PR #2489 (mixed row-count CPU GGUF matmul) for prefill; prompt lengths after chat
-   templating are rarely 1 or divisible by 4.
+3. ~~Look at PR #2489 (mixed row-count CPU GGUF matmul) for prefill.~~ **Tried and rejected
+   on Olala**: cherry-picked onto a CPU branch and benchmarked at prompt-len 33 with the
+   thread cap. TTFT 6048 -> 5994 ms (within noise). Its aarch64 dispatch covers Q4K/Q5K/
+   Q6K/Q4_0, but Olala's dominant projections are Q8_0, so it does not engage. Do not redo.
 4. Fuse small elementwise ops (relu^2, gate, geodesic, norms) if the 16-thread profile still
    shows many tiny barrier syncs after the thread cap.
 

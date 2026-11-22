@@ -45,6 +45,11 @@ This is the largest known lever on this host and it has been found twice.
   `--cpu-threads N` CLI flag on `pr/18-cpu-threads-flag` sets both env vars before
   `init_global_threadpool()`. End-to-end: 189 ms vs 427 ms per token on that build.
 
+  A third lever is `CANDLE_BARRIER_POOL_SPIN_LIMIT`. Default is 25_000; setting it to 0
+  makes idle workers park immediately. Paired A/B on top of the cap (6 rounds): wall ratio
+  0.937 [0.908, 0.965], CPU time ratio 0.337 [0.319, 0.352]. Steady-state TPOT is flat
+  (~205 ms); the saving is startup/teardown. `--cpu-threads` now sets this too.
+
   This is the same class of problem as the upstream GEMV scaling issue below.
 
 `CANDLE_NUM_THREADS` is read when Candle's barrier pool is first created, so it must be set

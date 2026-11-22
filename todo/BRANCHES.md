@@ -12,7 +12,7 @@ Tip commits as of 2026-11-22. `fork` is `lu-zero/mistral.rs`; `origin` is upstre
 | `pr/15-olala-moe-hostsync` | `5648bc2d8` | none | superseded: bias hoist folded into #2563 |
 | `pr/16-olala-neon` | `3610c2c35` | none | superseded by pr/17 |
 | `pr/17-olala-cpu-kernels` | `0bedd5627` | #2565 | folded: gated aarch64 NEON + 3 harnesses + fallback fix |
-| `pr/18-cpu-threads-flag` | `6f565ab5c` | none | `--cpu-threads N` caps Rayon + Candle pools before init; 3.15x on Olala |
+| `pr/18-cpu-threads-flag` | `c024927eb` | #2568 | `--cpu-threads N` caps Rayon + Candle pools before init; 3.15x on Olala |
 
 
 PR #2563 is the model-support PR: no CPU-specific code, fast on CUDA via `QuantMethod`.
