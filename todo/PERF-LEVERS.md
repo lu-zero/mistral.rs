@@ -23,9 +23,29 @@ This is the largest known lever on this host and it has been found twice.
   | 64 | 418.4 ms |
   | 96 | 356.6 ms |
 
-  So 16-32 workers give ~2.2x over the default. Above 32 it degrades sharply. This is the
-  same class of problem as the upstream GEMV scaling issue below: many tiny parallel ops
-  each paying a 127-worker barrier sync.
+  So 16-32 workers give ~2.2x over the default. Above 32 it degrades sharply.
+
+  **Correction: the earlier sweep only capped Candle's barrier pool.** The `gemm` crate
+  (F32 matmul) uses rayon, so `RAYON_NUM_THREADS` matters too. Re-measured 2026-11-22:
+
+  | settings | TPOT |
+  |---|---|
+  | neither set | 618.5 ms |
+  | `CANDLE_NUM_THREADS=16` | 284.4 ms |
+  | `RAYON_NUM_THREADS=16` | 224.5 ms |
+  | both =16 | **196.3 ms** (3.15x) |
+  | both =8 | 212.0 ms |
+
+  Paired A/B (`scripts/ab.py`, 6 rounds, alternating): wall ratio 0.5314, 95% CI
+  [0.4818, 0.5855] (resolved); CPU time ratio 0.1216 (8.4x less CPU burned); RSS ratio
+  0.9984 (unresolved, effectively unchanged). Logits are bit-identical between thread
+  settings (max abs diff 0.0 on the two-token oracle).
+
+  Mechanism: 128 workers spinning at barriers and rayon's F32 GEMM both waste CPU. The
+  `--cpu-threads N` CLI flag on `pr/18-cpu-threads-flag` sets both env vars before
+  `init_global_threadpool()`. End-to-end: 189 ms vs 427 ms per token on that build.
+
+  This is the same class of problem as the upstream GEMV scaling issue below.
 
 `CANDLE_NUM_THREADS` is read when Candle's barrier pool is first created, so it must be set
 in the environment before the process starts. There is no in-repo knob that reconfigures
