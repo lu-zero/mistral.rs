@@ -13,7 +13,7 @@ Tip commits as of 2026-11-22. `fork` is `lu-zero/mistral.rs`; `origin` is upstre
 | `pr/16-olala-neon` | `3610c2c35` | none | superseded by pr/17 |
 | `pr/17-olala-cpu-kernels` | `0bedd5627` | #2565 | folded: gated aarch64 NEON + 3 harnesses + fallback fix |
 | `pr/18-cpu-threads-flag` | `c024927eb` | #2568 | `--cpu-threads N` caps Rayon + Candle pools before init; 3.15x on Olala |
-| `pr/20-olala-gemv` | `725bc5a09` | none | cherry-pick of #2514 output-parallel GEMV + parity fix; 3.2x decode on Olala |
+| `pr/20-olala-gemv` | `725bc5a09` | none | local verification of #2514 + parity fix on Olala; delete after #2514 merges |
 
 
 PR #2563 is the model-support PR: no CPU-specific code, fast on CUDA via `QuantMethod`.
@@ -38,7 +38,7 @@ Local-only Olala experiments that were deliberately not folded:
 | `pr/07-gguf-selected-experts` | `348c6a567` | #2509 | dequant only routed GGUF experts |
 | `pr/08-iq-gguf` | `a91e3a3b2` | #2510 | IQ GGUF from block bytes |
 | `pr/09-kolibri1-model` | `05b1e1f23` | #2511 | Kolibri-1 model |
-| `pr/10-cpu-gemv` | `edae0710c` | #2514 | split CPU decode GEMV across output rows |
+| `pr/10-cpu-gemv` | `edae0710c` (rebase: `b0736f716`) | #2514 | split CPU decode GEMV across output rows + Olala parity fix |
 | `pr/11-q6k-rows` | `92ea0b93a` | #2525 | dot dense Q6_K rows from blocks |
 | `cpu-decode-bandwidth` | `578b99994` | none | integration branch for all of the above plus IQ NEON, fused gather, attention sinks, Q3_K/Q5_K expert dots |
 | `docs/perf-record` | `ae03b119f` | none | perf record docs + detailed `todo/` tree |
