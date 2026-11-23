@@ -32,6 +32,14 @@ Thread count is the big lever; see `PERF-LEVERS.md`. The NEON scan is only ~2% o
 
 ## What is left
 
+0. **GEMV win (2026-11-23):** PR #2514's output-parallel GEMV cherry-picked onto
+   `pr/20-olala-gemv` (`11c275122`) plus a parity fix (`725bc5a09`). Decode 207 -> 65 ms/tok
+   (3.2x, 15.5 tok/s, above the fork's 12.5). The parity fix changes `dot_f32` from four
+   interleaved accumulators to one four-wide accumulator over K, matching `gemm_f32`'s
+   reduction order: logit cos becomes 0.998787 / 0.999686, better than the candle-matmul
+   baseline (0.998586 / 0.997872). Paired A/B: wall ratio 0.713 [0.698, 0.777], CPU 0.588,
+   RSS flat. All 388 quant tests pass. Not pushed/opened as a PR yet - decide whether to
+   offer the dot fix to PR #2514 upstream or fold into #2565.
 1. Port the parallel stacked-expert gather from `cpu-decode-bandwidth:mistralrs-quant/src/moe_gather_cpu.rs`
    if the indexed GEMV path ever declines (unquantized fallback). Do not rewrite it.
 2. Re-sweep `MIN_PARALLEL_OUTPUTS` and thread count at 3.4 GHz under `performance`, then
