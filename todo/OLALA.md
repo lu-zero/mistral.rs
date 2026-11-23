@@ -59,3 +59,13 @@ Thread count is the big lever; see `PERF-LEVERS.md`. The NEON scan is only ~2% o
 - Closed-form batched prefill: tried, exact but ~8x slower. Kept as harness only.
 - NEON state scan without a thread cap: 1.35x, which is dwarfed by the 2.2x thread-cap win.
 - Any GGUF expert dequantization work: already fixed on `cpu-decode-bandwidth`.
+
+## PR layout as of 2026-11-23
+
+- #2563: model support (open, green).
+- #2514: generic output-parallel GEMV + dot-order parity fix (open, green, **needs a
+  maintainer to merge - our fork account lacks merge permission on upstream**).
+- #2572: **draft**, consolidated Olala CPU stack (NEON + harnesses + fallback fix + GEMV +
+  `--cpu-threads`) with the full metrics table. Supersedes #2565 and #2568, both closed with
+  a comment pointing here.
+- If #2514 merges first, rebase #2572 to drop the two duplicated GEMV commits.

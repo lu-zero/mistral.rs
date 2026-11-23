@@ -11,9 +11,10 @@ Tip commits as of 2026-11-22. `fork` is `lu-zero/mistral.rs`; `origin` is upstre
 | `pr/14-olala-mamba-parity` | `a63127b98` | none | superseded: harnesses folded into #2565 |
 | `pr/15-olala-moe-hostsync` | `5648bc2d8` | none | superseded: bias hoist folded into #2563 |
 | `pr/16-olala-neon` | `3610c2c35` | none | superseded by pr/17 |
-| `pr/17-olala-cpu-kernels` | `0bedd5627` | #2565 | folded: gated aarch64 NEON + 3 harnesses + fallback fix |
-| `pr/18-cpu-threads-flag` | `c024927eb` | #2568 | `--cpu-threads N` caps Rayon + Candle pools before init; 3.15x on Olala |
-| `pr/20-olala-gemv` | `725bc5a09` | none | local verification of #2514 + parity fix on Olala; delete after #2514 merges |
+| `pr/17-olala-cpu-kernels` | `0bedd5627` | closed -> #2572 | folded: gated aarch64 NEON + 3 harnesses + fallback fix |
+| `pr/18-cpu-threads-flag` | `c024927eb` | closed -> #2572 | `--cpu-threads N` caps Rayon + Candle pools before init; 3.15x on Olala |
+| `pr/20-olala-gemv` | `725bc5a09` | none | local verification of #2514 + parity fix on Olala; superseded by #2572 |
+| `pr/21-olala-cpu-consolidated` | `36dfe054e` | #2572 DRAFT | all Olala CPU perf + full metrics; supersedes #2565 and #2568 |
 
 
 PR #2563 is the model-support PR: no CPU-specific code, fast on CUDA via `QuantMethod`.
