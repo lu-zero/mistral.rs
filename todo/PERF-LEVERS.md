@@ -103,11 +103,14 @@ Attempts made:
 
 1. `CANDLE_CPU_MASK` affinity sweep (none / 0-15 / 0-31 / 32-47 / 16-31). Results wildly
    inconsistent (65 ms to 288 ms TPOT); **discard**, cannot conclude on this host.
-2. Post-GEMV thread-count re-sweep (8/12/16/24/32). Results inconsistent with the earlier
-   pre-GEMV sweep (8 threads = 79 ms, 16 = 100 ms in one run; earlier 16 = 66 ms).
-   **Discard**: `ps aux` showed the Inkling-2 peer benchmark at 1255% CPU plus several
-   RISC-V cross-compiles at 500% each, load average ~23. The governor is also non-uniform
-   (cpu0-64 at 1.0 GHz, cpu96 at 3.4 GHz). No thread conclusion until the box is quiet.
+2. Post-GEMV thread-count re-sweep (8/12/16/24/32) on the busy box. **Discarded**: `ps aux`
+   showed the Inkling-2 peer benchmark at 1255% CPU plus several RISC-V cross-compiles,
+   load average ~23. Numbers were inconsistent with the earlier pre-GEMV sweep.
+3. Re-run of the same sweep on a QUIET box (load 0.88, no benchmark/downloaders) gave
+   8=69.4, 12=66.0, 16=71.5, 24=59.8, 32=79.7 ms TPOT in single runs. That looked like a
+   24-thread win, but paired A/B (8 rounds) says wall ratio 0.952 with CI [0.917, 1.046]
+   - **unresolved** - and CPU time 1.32x WORSE at 24 threads. **Keep 16 as the default.**
+   This is the skill's rule in action: a single-run 17% delta was pure noise.
 3. BF16-weight investigation: instrumented `gemv_into_vec` to log weight dtype. All GEMV
    weights are **F32** (`n=1536, k=1536/3072/384/4608`) even though the GGUF stores several
    of them as BF16. Cause: the GGUF loader passes the model dtype (`DType::F32`, from
