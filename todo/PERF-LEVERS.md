@@ -121,3 +121,31 @@ Attempts made:
    shapes. Needs a quiet box, broader tests, and a decision on scope before attempting.
 
 No code changes landed from these attempts. The instrument was removed; the branch is clean.
+
+## 2026-11-24 quiet-box follow-up (host load 0.88, valid window)
+
+Confirmed with paired A/B (`scripts/ab.py`, 8 rounds):
+- 24 vs 16 threads: wall ratio 0.952, CI [0.917, 1.046] - **unresolved**, and CPU time
+  1.32x worse. Keep 16. The single-run 24-thread "win" was noise.
+- GEMV parallelism itself: 1 thread 246 ms, 4 = 134, 8 = 77, 16 = 71 ms TPOT. Clean
+  monotonic curve confirms the output-row split is the right design and 16 is at the plateau.
+- `MISTRALRS_GEMV_MIN_OUTPUTS` sweep (512/2048/8192/100000): no effect, because Olala's
+  weights all exceed the 2 MiB `MIN_PARALLEL_BYTES` threshold and always qualify.
+- `--dtype bf16` does NOT change GGUF weight dtype (instrumented GEMV still logs F32 for all
+  four shapes). GGUF uses `internal_dtype` from the config; the CLI flag is ignored here.
+
+BF16 loader experiment (Olala-scoped `new_preserving_native_float`, native BF16 kept for
+dense weights, plus single-accumulator `dot_bf16`):
+- GEMV dtype confirmed BF16 for all four shapes.
+- Wall A/B: ratio 0.989, CI [0.984, 1.006] - **unresolved**. CPU time 0.918 (8% better),
+  RSS 0.973 (2.7% lower, resolved).
+- Parity REGRESSED at token 0: cos 0.997271 vs the F32-weight build's 0.998787 (token 1
+  argmax improved to the oracle's 0, but that is a wash).
+- **Rejected**: no resolved wall win, parity regression, and a broad generic loader change.
+  The exp branch was deleted and the working tree restored; no code landed.
+
+Conclusion: on a quiet box the existing stack is near the plateau for these levers. The
+remaining prefill gap (15.6 vs the fork's ~29 t/s) needs a structural change - the model's
+`forward_inner` loops tokens sequentially because the Mamba recurrence is stateful, so the
+projections cannot simply be batched. The earlier closed-form attempt was 8x slower. Do not
+spend more time on thread/dtype/env tuning without a new hypothesis.
