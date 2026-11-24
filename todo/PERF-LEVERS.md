@@ -91,3 +91,30 @@ Record all of: git revision printed by the binary, `CANDLE_NUM_THREADS`, governo
 `--prompt-len`, `--gen-len`, `--depth`. Use `perf record -F 199 -g` and
 `perf report --children`; at 128 workers the self-cost view is useless because every worker
 gets ~0.7% and the real kernels are inlined into closures.
+
+## 2026-11-24 attempts on the consolidated branch (INCONCLUSIVE - machine busy)
+
+Profiled `pr/21-olala-cpu-consolidated` with the GEMV in place. Final shape of the profile:
+`gemv_cpu::Weight::dot` ~19% (bandwidth-bound streaming of F32 GEMV weights), `memcpy` 3.4%,
+expert `indexed_gemv` ~5% including ~4.4% in one-time `PackedStorage::initialize` repacking,
+`olala_neon::mamba_state_scan_p` 3.6%. No single remaining hotspot dominates.
+
+Attempts made:
+
+1. `CANDLE_CPU_MASK` affinity sweep (none / 0-15 / 0-31 / 32-47 / 16-31). Results wildly
+   inconsistent (65 ms to 288 ms TPOT); **discard**, cannot conclude on this host.
+2. Post-GEMV thread-count re-sweep (8/12/16/24/32). Results inconsistent with the earlier
+   pre-GEMV sweep (8 threads = 79 ms, 16 = 100 ms in one run; earlier 16 = 66 ms).
+   **Discard**: `ps aux` showed the Inkling-2 peer benchmark at 1255% CPU plus several
+   RISC-V cross-compiles at 500% each, load average ~23. The governor is also non-uniform
+   (cpu0-64 at 1.0 GHz, cpu96 at 3.4 GHz). No thread conclusion until the box is quiet.
+3. BF16-weight investigation: instrumented `gemv_into_vec` to log weight dtype. All GEMV
+   weights are **F32** (`n=1536, k=1536/3072/384/4608`) even though the GGUF stores several
+   of them as BF16. Cause: the GGUF loader passes the model dtype (`DType::F32`, from
+   `normal_loaders.rs:7039`) into `GgufWeightSource::new`, and `infer_binding_dtype` returns
+   that dtype for plain `Tensor` bindings. Keeping BF16 would halve GEMV weight traffic and
+   is numerically safe (BF16 -> F32 widening is exact), but it is a **generic loader change**
+   affecting every model, and candle's CPU MatMul rejects BF16 for non-GEMV (prefill m>1)
+   shapes. Needs a quiet box, broader tests, and a decision on scope before attempting.
+
+No code changes landed from these attempts. The instrument was removed; the branch is clean.
