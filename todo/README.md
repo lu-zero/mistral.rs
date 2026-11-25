@@ -38,3 +38,10 @@ plus the Olala-specific state that was missing when those were written.
 All numbers in these files were measured on the aarch64 Ampere-1a box (128 cores, 4 NUMA
 nodes, 1.0 GHz default governor, 3.4 GHz only under explicit `performance`). See
 `cpu-decode-bandwidth:todo/evidence-host.md`. Numbers do not transfer to other hosts.
+
+## Durable copy
+
+The full Olala CPU experiment record is kept outside the repo (so it survives rebases and
+force-pushes) at `/home/lu_zero/Sources/mistral-rs-experiments/olala/`. Start with its
+`README.md`; it indexes all experiments and outcomes. This in-repo `todo/` tree stays as the
+working index; update the external copy when the campaign ends.
