@@ -69,3 +69,17 @@ are what the corresponding PRs point at. Prefer the `rebase/` tips when folding 
 If a fix already exists on a branch in this table, cherry-pick or port it. Do not write a
 second implementation. When a branch is superseded, update its row here rather than deleting
 the branch.
+
+## Rebase audit 2026-11-25
+
+Upstream `origin/master` = `21da642fd` (unchanged since #2561 on 2026-11-20).
+
+- All 10 open PRs are already based on current master. Their pushed heads are the
+  `rebase/prNN` branches, not the older local `pr/NN` pointers - do not judge freshness from
+  the local `pr/NN` branch tips.
+- `todo/perf-state` was 1 commit behind; rebased and force-pushed (`e9a6e17cf`).
+- Local integration branches `cpu-decode-bandwidth`, `flint_by_flint`, `docs/perf-record`,
+  `apex-pr-stack` are 23-35 commits behind and were NOT rebased. A trial rebase of the two
+  smallest onto current master conflicted on the first commit because #2561 refactored 216
+  files. They have no PRs; their content is already in the pushed PR branches and in the
+  `todo/` evidence trees. Leave them as archival.
